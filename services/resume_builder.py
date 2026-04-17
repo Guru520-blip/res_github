@@ -48,20 +48,31 @@ class ResumeBuilder:
         )
 
         print(f"  → Building Word document...")
-
         docx_path = self._build_docx(tailored, company_name)
-
         print(f"  → Resume saved: {docx_path}")
+
+        # PDF generation
+        from services.pdf_exporter import PDFExporter
+        exporter = PDFExporter()
+        pdf_path = exporter.export_from_docx(docx_path)
+        if not os.path.exists(pdf_path):
+            pdf_path = exporter.build_pdf_from_content(tailored, company_name)
+        print(f"  → PDF saved: {pdf_path}")
+
+        # ATS analysis
+        from services.ats_checker import ATSChecker
+        checker = ATSChecker()
+        ats_report = checker.analyze(
+            tailored, job_description, open_role, sector
+        )
 
         return {
             "tailored_content": tailored,
             "docx_path": docx_path,
-            "ats_score": self._calc_ats_score(
-                tailored, job_description
-            ),
-            "changes_count": len(
-                tailored.get("changes_made", [])
-            )
+            "pdf_path": pdf_path,
+            "ats_score": ats_report.get("overall_score", 0),
+            "ats_report": ats_report,
+            "changes_count": len(tailored.get("changes_made", []))
         }
 
     def _ai_tailor(

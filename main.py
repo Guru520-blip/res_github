@@ -512,7 +512,8 @@ def _display_complete_output(
     # RESUME
     console.print(Panel(
         f"[bold green]✓ TAILORED RESUME[/bold green]\n\n"
-        f"File: [bold]{resume_result['docx_path']}[/bold]\n"
+        f"DOCX: [bold]{resume_result['docx_path']}[/bold]\n"
+        f"PDF:  [bold]{resume_result.get('pdf_path', 'Not generated')}[/bold]\n"
         f"ATS Score: [bold]{resume_result.get('ats_score',0)}/10[/bold]\n\n"
         f"[bold]Headline:[/bold]\n"
         f"{resume_result['tailored_content']['tailored_headline']}\n\n"
@@ -526,6 +527,36 @@ def _display_complete_output(
         title="[bold]RESUME[/bold]",
         border_style="green"
     ))
+
+    # ATS ANALYSIS
+    ats = resume_result.get("ats_report", {})
+    if ats:
+        score = ats.get("overall_score", 0)
+        score_color = (
+            "green" if score >= 7 else
+            "yellow" if score >= 5 else "red"
+        )
+        verdict = ats.get("verdict", "")
+        matched = ats.get("matched_keywords", [])
+        missing = ats.get("missing_critical", [])
+        recs = ats.get("recommendations", [])
+
+        ats_text = (
+            f"Score: [{score_color}]{score}/10[/{score_color}]  "
+            f"Match: {ats.get('keyword_match_rate', '')}  "
+            f"Verdict: [{score_color}]{verdict}[/{score_color}]\n\n"
+            f"[green]Matched:[/green] "
+            f"{', '.join(matched[:8]) if matched else 'N/A'}\n\n"
+            f"[yellow]Missing Critical:[/yellow] "
+            f"{', '.join(missing) if missing else 'None'}\n\n"
+            f"[bold]Recommendations:[/bold]\n" +
+            "\n".join(f"  • {r}" for r in recs[:3])
+        )
+        console.print(Panel(
+            ats_text,
+            title="[bold]ATS ANALYSIS[/bold]",
+            border_style="yellow"
+        ))
 
     # COLD EMAIL
     cold = outreach_result["cold_email"]
@@ -579,7 +610,8 @@ def _display_complete_output(
         f"[bold]Contact ID:[/bold]  {contact_id or 'None'}\n"
         f"[bold]Resume ID:[/bold]   {resume_id}\n"
         f"[bold]Outreach ID:[/bold] {outreach_id}\n\n"
-        f"[bold]Resume file:[/bold] {resume_result['docx_path']}\n\n"
+        f"[bold]DOCX:[/bold] {resume_result['docx_path']}\n"
+        f"[bold]PDF:[/bold]  {resume_result.get('pdf_path', 'N/A')}\n\n"
         f"[bold yellow]NEXT STEPS:[/bold yellow]\n"
         f"  1. Open and review resume: {resume_result['docx_path']}\n"
         f"  2. Copy cold email → send to "
