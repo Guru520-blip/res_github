@@ -47,11 +47,13 @@ def main():
         console.print("  [cyan]6[/cyan]  View all outputs for a company")
         console.print("  [cyan]7[/cyan]  Export pipeline to Excel")
         console.print("  [cyan]8[/cyan]  View follow-ups due")
+        console.print("  [cyan]9[/cyan]  Auto-discover target companies (web search)")
+        console.print("  [cyan]10[/cyan] Send approved email")
         console.print("  [cyan]Q[/cyan]  Quit")
 
         choice = Prompt.ask(
             "\n[bold yellow]Choose[/bold yellow]",
-            choices=["1","2","3","4","5","6","7","8","Q","q"]
+            choices=["1","2","3","4","5","6","7","8","9","10","Q","q"]
         )
 
         if choice == "1":
@@ -70,6 +72,10 @@ def main():
             export_pipeline()
         elif choice == "8":
             view_followups_due()
+        elif choice == "9":
+            flow_auto_discover()
+        elif choice == "10":
+            flow_send_email()
         elif choice.upper() == "Q":
             console.print("\n[dim]Goodbye.[/dim]\n")
             break
@@ -912,6 +918,201 @@ def view_followups_due():
             f"  Original sent: {item.get('sent_at','not sent yet')}\n"
             f"  Subject: Re: {item.get('email_subject','')}\n"
         )
+
+
+def flow_auto_discover():
+    """Auto-discover target companies using web search."""
+    from services.signal_scraper import SignalScraper
+
+    console.print(
+        "\n[bold cyan]AUTO-DISCOVER TARGET COMPANIES[/bold cyan]"
+    )
+    console.print(
+        "[dim]Searches web for companies matching your profile...[/dim]\n"
+    )
+
+    console.print("Filter by sector (optional):")
+    console.print(
+        "  [dim]Power, Infrastructure, EPC, Mining, "
+        "Energy, AI — or press Enter for all[/dim]"
+    )
+    sector_filter = Prompt.ask("Sector filter", default="")
+
+    console.print("\nFilter by geography (optional):")
+    console.print(
+        "  [dim]UAE, Africa, Singapore, UK, India "
+        "— or press Enter for all[/dim]"
+    )
+    geo_filter = Prompt.ask("Geography filter", default="")
+
+    max_results = int(Prompt.ask("Max companies to find", default="15"))
+
+    console.print(
+        f"\n[dim]Searching... this takes 1-2 minutes.[/dim]\n"
+    )
+
+    scraper = SignalScraper()
+
+    custom_queries = None
+    if sector_filter or geo_filter:
+        base = f'"{sector_filter}" ' if sector_filter else ""
+        geo = f'"{geo_filter}" ' if geo_filter else ""
+        custom_queries = [
+            f'{base}{geo}("VP Operations" OR COO OR "Director Operations") 2025',
+            f'{base}{geo}expansion "operations" executive hire 2025',
+            f'{base}{geo}("PE acquisition" OR funding) operations 2025',
+            f'{base}{geo}("new contract" OR turnaround) COO 2025'
+        ]
+
+    signals = asyncio.run(
+        scraper.run_discovery(
+            custom_queries=custom_queries,
+            max_results=max_results
+        )
+    )
+
+    if not signals:
+        console.print("[yellow]No signals found. Try different filters.[/yellow]")
+        return
+
+    table = Table(
+        title=f"DISCOVERED OPPORTUNITIES ({len(signals)})",
+        show_header=True,
+        header_style="bold blue"
+    )
+    table.add_column("#", width=3)
+    table.add_column("Company", style="bold")
+    table.add_column("Country")
+    table.add_column("Sector")
+    table.add_column("Trigger")
+    table.add_column("Score", style="cyan")
+
+    for i, sig in enumerate(signals, 1):
+        score = sig.get("priority_score", 0)
+        score_color = (
+            "green" if score >= 7 else
+            "yellow" if score >= 5 else "dim"
+        )
+        table.add_row(
+            str(i),
+            sig.get("company_name", ""),
+            sig.get("country", ""),
+            sig.get("sector", ""),
+            (sig.get("trigger_signal", "")[:50] + "...")
+            if len(sig.get("trigger_signal", "")) > 50
+            else sig.get("trigger_signal", ""),
+            f"[{score_color}]{score}[/{score_color}]"
+        )
+
+    console.print(table)
+
+    console.print(
+        "\n[dim]Enter company numbers to add to pipeline "
+        "(comma-separated, e.g. 1,3,5) or press Enter to skip:[/dim]"
+    )
+    selection = Prompt.ask("Select companies", default="")
+
+    if not selection.strip():
+        return
+
+    selected_nums = [
+        int(n.strip()) for n in selection.split(",")
+        if n.strip().isdigit()
+    ]
+
+    for num in selected_nums:
+        if 1 <= num <= len(signals):
+            sig = signals[num - 1]
+            domain = ""
+            if sig.get("website_hint"):
+                domain = (sig["website_hint"]
+                    .replace("https://", "")
+                    .replace("http://", "")
+                    .replace("www.", "")
+                    .split("/")[0]
+                )
+
+            with get_db() as db:
+                cid = CompanyDB.create(db, {
+                    "company_name": sig.get("company_name", ""),
+                    "domain": domain,
+                    "country": sig.get("country", ""),
+                    "sector": sig.get("sector", ""),
+                    "trigger_type": sig.get("trigger_type", ""),
+                    "trigger_signal": sig.get("trigger_signal", ""),
+                    "trigger_source_url": sig.get("trigger_source_url", ""),
+                    "open_role_title": sig.get("open_role_title", ""),
+                    "priority_score": sig.get("priority_score", 0),
+                    "status": "discovered",
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
+                })
+            console.print(
+                f"[green]✓[/green] Added: {sig['company_name']} (ID: {cid})"
+            )
+
+    console.print(
+        "\n[dim]Go to option 1 to add contacts and generate "
+        "outputs for these companies.[/dim]"
+    )
+
+
+def flow_send_email():
+    """Send an approved email."""
+    from services.email_sender import EmailSender
+
+    sender = EmailSender()
+    can, reason = sender.can_send()
+
+    if not can:
+        console.print(f"[red]Cannot send: {reason}[/red]")
+        if "configured" in reason:
+            console.print(
+                "[dim]Add SMTP settings to .env file[/dim]"
+            )
+        return
+
+    view_pipeline()
+    company_id = Prompt.ask("\nEnter company ID to send email for")
+
+    with get_db() as db:
+        outreach_list = OutreachDB.get_by_company(db, int(company_id))
+        contacts = ContactDB.get_by_company(db, int(company_id))
+
+    if not outreach_list or not contacts:
+        console.print("[red]No outreach or contacts found.[/red]")
+        return
+
+    out = outreach_list[0]
+    contact = contacts[0]
+
+    console.print(Panel(
+        f"[bold]TO:[/bold] {contact.get('email','')}\n"
+        f"[bold]SUBJECT:[/bold] {out.get('email_subject','')}\n\n"
+        f"{out.get('email_body','')}",
+        title="EMAIL PREVIEW",
+        border_style="cyan"
+    ))
+
+    console.print(
+        f"\n[bold yellow]Sends today: "
+        f"{sender.sends_today}/{settings.MAX_EMAILS_PER_DAY}[/bold yellow]"
+    )
+
+    if not Confirm.ask("Send this email?", default=False):
+        return
+
+    result = sender.send_email(
+        to_email=contact.get("email", ""),
+        subject=out.get("email_subject", ""),
+        body=out.get("email_body", ""),
+        outreach_id=out.get("id")
+    )
+
+    if result["success"]:
+        console.print(f"[green]✓ Email sent at {result['sent_at']}[/green]")
+    else:
+        console.print(f"[red]Failed: {result['error']}[/red]")
 
 
 def _add_business_days(start: date, days: int) -> date:

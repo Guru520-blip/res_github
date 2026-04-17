@@ -163,15 +163,16 @@ class CompanyDB:
 
     @staticmethod
     def get_all(conn) -> list:
-        rows = conn.execute("""
+        cursor = conn.execute("""
             SELECT c.*,
                    ct.full_name AS contact_name,
                    ct.email_status
             FROM companies c
             LEFT JOIN contacts ct ON ct.company_id = c.id AND ct.is_primary = 1
-            ORDER BY c.created_at DESC
-        """).fetchall()
-        return [_row_to_dict(r) for r in rows]
+            ORDER BY c.priority_score DESC, c.created_at DESC
+        """)
+        cols = [d[0] for d in cursor.description]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
     @staticmethod
     def get_by_id(conn, company_id: int) -> Optional[dict]:
@@ -345,7 +346,7 @@ class OutreachDB:
 
     @staticmethod
     def get_followups_due(conn, date_str: str) -> list:
-        rows = conn.execute(
+        cursor = conn.execute(
             """
             SELECT o.*, c.company_name, ct.full_name AS contact_name
             FROM outreach o
@@ -357,5 +358,21 @@ class OutreachDB:
             ORDER BY o.followup_due_date ASC
             """,
             (date_str,)
-        ).fetchall()
-        return [_row_to_dict(r) for r in rows]
+        )
+        cols = [d[0] for d in cursor.description]
+        return [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+    @staticmethod
+    def count_sent_today(conn, date_str: str) -> int:
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM outreach WHERE sent_at LIKE ?",
+            (f"{date_str}%",)
+        )
+        return cursor.fetchone()[0]
+
+    @staticmethod
+    def mark_sent(conn, outreach_id: int, sent_at: str):
+        conn.execute(
+            "UPDATE outreach SET status='sent', sent_at=? WHERE id=?",
+            (sent_at, outreach_id)
+        )
