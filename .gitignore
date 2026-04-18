@@ -5,3 +5,4 @@ __pycache__/
 venv/
 job_search.db
 output/
+.streamlit/secrets.toml
